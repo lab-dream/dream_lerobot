@@ -105,7 +105,15 @@ def resolve_delta_timestamps(
     return delta_timestamps
 
 
-def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotDataset:
+def _dataset_state(cfg: TrainPipelineConfig) -> str | None:
+    if cfg.policy is not None and cfg.policy.type == "diffusion":
+        return getattr(cfg.policy, "state", None)
+    return None
+
+
+def make_dataset(
+    cfg: TrainPipelineConfig, *, apply_state_transform: bool = True
+) -> LeRobotDataset | StreamingLeRobotDataset:
     """Handles the logic of setting up delta timestamps and image transforms before creating a dataset.
 
     Args:
@@ -118,6 +126,9 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
         LeRobotDataset | StreamingLeRobotDataset: a StreamingLeRobotDataset when `cfg.dataset.streaming` is set.
     """
     # On the "gpu" backend the workers only decode; lerobot-train augments each batch on the policy device.
+    state = _dataset_state(cfg) if apply_state_transform else None
+    if state == "relative" and cfg.dataset.streaming:
+        raise NotImplementedError("Relative EEF currently requires dataset.streaming=false.")
     image_transforms_cfg = cfg.dataset.image_transforms
     image_transforms = (
         ImageTransforms(image_transforms_cfg)
@@ -170,6 +181,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | StreamingLeRobotD
                 tolerance_s=cfg.tolerance_s,
                 repo_type=repo_type,
                 video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+                state=state,
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -230,7 +242,10 @@ def make_train_eval_datasets(
     The last ceil(n_episodes * eval_split) episodes per task are held out for evaluation.
     If eval_split == 0.0, returns (full_dataset, None).
     """
-    full_dataset = make_dataset(cfg)
+    # With a split, compute relative statistics only on the eventual training episodes.
+    if _dataset_state(cfg) == "relative" and cfg.dataset.streaming:
+        raise NotImplementedError("Relative EEF currently requires dataset.streaming=false.")
+    full_dataset = make_dataset(cfg, apply_state_transform=cfg.dataset.eval_split == 0.0)
 
     if cfg.dataset.eval_split == 0.0:
         return full_dataset, None
@@ -284,6 +299,7 @@ def make_train_eval_datasets(
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+        state=_dataset_state(cfg),
     )
 
     eval_dataset = LeRobotDataset(
@@ -299,6 +315,8 @@ def make_train_eval_datasets(
         tolerance_s=cfg.tolerance_s,
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
+        state=_dataset_state(cfg),
+        relative_stats=train_dataset.meta.stats if _dataset_state(cfg) == "relative" else None,
     )
 
     if cfg.dataset.use_imagenet_stats:

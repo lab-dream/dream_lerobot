@@ -15,15 +15,19 @@
 # limitations under the License.
 """Private reader component for LeRobotDataset. Handles random-access reading (HF dataset, delta indices, video decoding)."""
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import datasets
+import numpy as np
 import torch
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT
+from lerobot.state_free.relative_eef_pose import RelativeEEFTransform, RelativeStatsAccumulator
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .feature_utils import (
@@ -125,6 +129,7 @@ class DatasetReader(BaseDatasetReader):
         image_transforms: Callable | None,
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
+        state: str | None = None,
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -170,6 +175,56 @@ class DatasetReader(BaseDatasetReader):
 
         self._depth_encoder_configs = depth_encoder_configs(meta)
         self._image_depth_units = image_depth_units(meta)
+        self._state = state
+        self._relative_transform = (
+            RelativeEEFTransform(
+                meta.features,
+                meta.stats,
+                observation_anchor_index=int(np.argmax((self.delta_indices or {}).get(OBS_STATE, [0]))),
+            )
+            if state == "relative"
+            else None
+        )
+
+    def compute_relative_stats(self) -> dict[str, dict[str, np.ndarray]]:
+        """Compute relative window statistics using tabular data only, without video decoding."""
+        transform = self._relative_transform
+        if transform is None:
+            raise ValueError("Relative statistics require state='relative'.")
+        if self.hf_dataset is None:
+            self.load_and_activate()
+        logging.info("Computing relative EEF statistics for selected episodes (without image decoding)")
+        columns = {}
+        for key in (OBS_STATE, ACTION, "index", "episode_index"):
+            values = self._column_view(key)[:][key]
+            columns[key] = torch.stack(values).numpy() if isinstance(values, list) else np.asarray(values)
+        absolute = columns["index"].reshape(-1)
+        episodes = columns["episode_index"].reshape(-1)
+        poses = {key: transform.poses(columns[key], key) for key in (OBS_STATE, ACTION)}
+        grippers = {key: transform.grippers(columns[key], key) for key in (OBS_STATE, ACTION)}
+        offsets = {key: (self.delta_indices or {}).get(key, [0]) for key in (OBS_STATE, ACTION)}
+        accumulators = {key: RelativeStatsAccumulator() for key in (OBS_STATE, ACTION)}
+        for episode in np.unique(episodes):
+            rows: np.ndarray = np.flatnonzero(episodes == episode)
+            metadata = self._meta.episodes[int(episode)]
+            start, end = metadata["dataset_from_index"], metadata["dataset_to_index"]
+            for begin in range(0, len(rows), 256):
+                anchors = absolute[rows[begin : begin + 256]]
+                queries: dict[str, np.ndarray] = {
+                    key: np.asarray(
+                        np.searchsorted(
+                            absolute, np.clip(anchors[:, None] + np.asarray(delta)[None, :], start, end - 1)
+                        )
+                    )
+                    for key, delta in offsets.items()
+                }
+                measured_anchor = poses[OBS_STATE][queries[OBS_STATE][:, transform.observation_anchor_index]]
+                for key in (OBS_STATE, ACTION):
+                    values = transform.encode(
+                        poses[key][queries[key]], grippers[key][queries[key]], measured_anchor
+                    )
+                    accumulators[key].update(values)
+        return {key: accumulator.finish() for key, accumulator in accumulators.items()}
 
     def try_load(self) -> bool:
         """Attempt to load from local cache. Returns True if data is sufficient."""
@@ -514,6 +569,9 @@ class DatasetReader(BaseDatasetReader):
                 items[i].update(padding)
             for i, tabular in enumerate(self._query_hf_dataset(query_indices_per_item)):
                 items[i].update(tabular)
+
+        if self._relative_transform is not None:
+            items = [self._relative_transform(item) for item in items]
 
         # Video frames: decoded one item at a time. We do not group decoding by physical
         # MP4 across the batch as it competes with the multiple workers of the DataLoader.

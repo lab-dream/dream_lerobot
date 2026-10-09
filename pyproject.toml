@@ -66,6 +66,12 @@ dependencies = [
     "Pillow>=10.0.0,<13.0.0",
     "einops>=0.8.0,<0.9.0",
 
+    # Forward kinematics (the Pinocchio Python distribution is named pin).
+    # Keep the binary dependencies compatible with the placo-dep ABI constraints below.
+    "pin>=3.4.0,<4.0.0",
+    "cmeel-urdfdom>=4,<5",
+    "cmeel-tinyxml2<11",
+
     # Config & Hub
     "draccus>=0.11.6,<0.12.0",
     "huggingface-hub>=1.6.0,<2.0.0",
@@ -412,10 +418,18 @@ torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
 
 [tool.setuptools.package-data]
-lerobot = ["envs/*.json", "annotations/steerable_pipeline/prompts/*.txt", "configs/recipes/*.yaml"]
+lerobot = [
+    "envs/*.json",
+    "annotations/steerable_pipeline/prompts/*.txt",
+    "configs/recipes/*.yaml",
+    "state_free/ai_worker/ffw_description/urdf/ffw_sg2_rev1_follower/ffw_sg2_follower.urdf",
+    "state_free/ai_worker/LICENSE",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# Only the FK model data is needed from the AI Worker ROS submodule.
+exclude = ["lerobot.state_free.ai_worker", "lerobot.state_free.ai_worker.*"]
 
 [tool.ruff]
 target-version = "py312"

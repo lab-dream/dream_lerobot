@@ -26,6 +26,7 @@ from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.errors import RevisionNotFoundError
 
 from lerobot.configs import DEFAULT_DEPTH_UNIT, DepthEncoderConfig, RGBEncoderConfig
+from lerobot.state_free.relative_eef_pose import relative_metadata
 from lerobot.utils.constants import HF_LEROBOT_HUB_CACHE
 from lerobot.utils.import_utils import get_safe_default_video_backend
 
@@ -72,6 +73,8 @@ class LeRobotDataset(torch.utils.data.Dataset):
         streaming_encoding: bool = False,
         encoder_queue_maxsize: int = 30,
         *,
+        state: str | None = None,
+        relative_stats: dict[str, dict[str, Any]] | None = None,
         repo_type: str = "dataset",
         token: str | bool | None = None,
         video_decoder_cache_size: int | None = None,
@@ -291,6 +294,15 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "Buckets, use repo_type='bucket' with dataset.streaming=true."
             )
 
+        self.state = state
+        if state not in (None, "relative"):
+            raise ValueError(f"Unsupported dataset state representation: {state!r}.")
+        if state == "relative" and self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
+            raise NotImplementedError("Relative EEF currently supports only the default Parquet/MP4 format.")
+        if state == "relative" and (streaming_encoding or batch_encoding_size != 1):
+            raise ValueError(
+                "Relative EEF is a read-only training view; record joints without state='relative'."
+            )
         self.image_transforms = image_transforms
         self.reader: BaseDatasetReader | None
         self.writer: DatasetWriter | None
@@ -324,6 +336,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             root=self.root,
             episodes=episodes,
             tolerance_s=tolerance_s,
+            state=state,
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
@@ -376,6 +389,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             self.writer = None
 
         self._is_finalized = False
+        if state == "relative":
+            # Reader keeps the original joint schema. Only the public training metadata changes.
+            stats = relative_stats if relative_stats is not None else reader.compute_relative_stats()
+            self._raw_meta = self.meta
+            self.meta = relative_metadata(self.meta, stats)
 
     # ── Writer guard ──────────────────────────────────────────────────
 
@@ -408,9 +426,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "Cannot read from a dataset that is being recorded. Call finalize() first, then access items."
             )
         if self.reader is None:
-            self.meta.ensure_readable()
+            reader_meta = getattr(self, "_raw_meta", self.meta)
+            reader_meta.ensure_readable()
             self.reader = DatasetReader(
-                meta=self.meta,
+                meta=reader_meta,
                 root=self.root,
                 episodes=self.episodes,
                 tolerance_s=self.tolerance_s,
@@ -419,6 +438,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 image_transforms=self.image_transforms,
                 return_uint8=self._return_uint8,
                 depth_output_unit=self._depth_output_unit,
+                state=getattr(self, "state", None),
             )
         return self.reader
 
@@ -830,6 +850,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             A new :class:`LeRobotDataset` in write mode.
         """
         obj = cls.__new__(cls)
+        obj.state = None
         obj.meta = LeRobotDatasetMetadata.create(
             repo_id=repo_id,
             fps=fps,
@@ -946,6 +967,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 "the shared cache. Please provide a local directory path."
             )
         obj = cls.__new__(cls)
+        obj.state = None
         obj.repo_id = repo_id
         obj._requested_root = Path(root)
         obj.revision = revision if revision else CODEBASE_VERSION

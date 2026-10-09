@@ -1,0 +1,3 @@
+[submodule "ai_worker"]
+	path = src/lerobot/state_free/ai_worker
+	url = https://github.com/ROBOTIS-GIT/ai_worker.git
