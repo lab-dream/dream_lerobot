@@ -74,6 +74,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         encoder_queue_maxsize: int = 30,
         *,
         state: str | None = None,
+        hand: str = "both",
         relative_stats: dict[str, dict[str, Any]] | None = None,
         repo_type: str = "dataset",
         token: str | bool | None = None,
@@ -211,6 +212,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 instead of writing PNG images first. This makes save_episode() near-instant. Defaults to False.
             encoder_queue_maxsize (int, optional): Maximum number of frames to buffer per camera when using
                 streaming encoding. Defaults to 30 (~1s at 30fps).
+            hand (str, optional): Arms included when state="relative": "both" (default), "left", or "right".
             repo_type (str, optional): "dataset" (default) or "bucket" for an HF
                 Storage Bucket. With "bucket" and no ``root``, the dataset is read
                 in place from ``hf://buckets/{repo_id}`` (map-style access requires
@@ -295,6 +297,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             )
 
         self.state = state
+        self.hand = hand
         if state not in (None, "relative"):
             raise ValueError(f"Unsupported dataset state representation: {state!r}.")
         if state == "relative" and self.meta.storage_format != DEFAULT_STORAGE_FORMAT:
@@ -337,6 +340,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             episodes=episodes,
             tolerance_s=tolerance_s,
             state=state,
+            hand=hand,
             video_backend=self._video_backend,
             delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
@@ -393,7 +397,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
             # Reader keeps the original joint schema. Only the public training metadata changes.
             stats = relative_stats if relative_stats is not None else reader.compute_relative_stats()
             self._raw_meta = self.meta
-            self.meta = relative_metadata(self.meta, stats)
+            self.meta = relative_metadata(self.meta, stats, hand=hand)
 
     # ── Writer guard ──────────────────────────────────────────────────
 

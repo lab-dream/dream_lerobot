@@ -4,6 +4,15 @@ https://diffusion-policy.cs.columbia.edu
 
 ## Training
 
+For AI Worker datasets, `--policy.state=relative` (the default) converts joints to
+measured-anchor EEF poses. Select the arms to train with `--policy.hand=both`
+(default), `--policy.hand=right`, or `--policy.hand=left`. Both observations and
+actions contain 20 values for both arms, or 10 for one arm: position (3), rotation
+(6), and that arm's gripper (1). Normalization statistics use the same selection,
+and held-out evaluation episodes reuse the training statistics. Source datasets
+remain unchanged. Single-hand selection requires `--policy.state=relative`;
+`--policy.state=null --policy.hand=both` retains the raw joint representation.
+
 The reference implementation maintains an exponential moving average (EMA) of the policy weights during training and evaluates the EMA weights. To reproduce this behavior, enable the trainer's EMA shadow:
 
 ```bash

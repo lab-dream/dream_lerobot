@@ -44,6 +44,8 @@ class DiffusionConfig(PreTrainedConfig):
         state: "relative" converts AI Worker joint trajectories to measured-anchor EEF trajectories
             in the dataset reader, with absolute gripper joints normalized to [-1, 1]. The model
             still conditions on observation.state. None (CLI: --policy.state=null) retains raw joints.
+        hand: Arms included in relative EEF observations/actions: "both" (20 values),
+            "left" or "right" (10 values, including the selected gripper).
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
         horizon: Diffusion model action prediction size as detailed in `DiffusionPolicy.select_action`.
@@ -105,6 +107,7 @@ class DiffusionConfig(PreTrainedConfig):
 
     # Relative AI Worker EEF observations/actions; None keeps the stored joint representation.
     state: str | None = "relative"
+    hand: str = "both"
     # Inputs / output structure.
     n_obs_steps: int = 2
     horizon: int = 64
@@ -173,6 +176,10 @@ class DiffusionConfig(PreTrainedConfig):
 
         if self.state not in ("relative", None):
             raise ValueError(f"`state` must be 'relative' or None. Got {self.state!r}.")
+        if self.hand not in ("both", "left", "right"):
+            raise ValueError(f"`hand` must be 'both', 'left' or 'right'. Got {self.hand!r}.")
+        if self.hand != "both" and self.state != "relative":
+            raise ValueError("Selecting a single `hand` requires state='relative'.")
 
         """Input validation (not exhaustive)."""
         if not self.vision_backbone.startswith("resnet"):

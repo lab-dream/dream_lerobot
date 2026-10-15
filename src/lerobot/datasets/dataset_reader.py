@@ -130,6 +130,7 @@ class DatasetReader(BaseDatasetReader):
         return_uint8: bool = False,
         depth_output_unit: str = DEFAULT_DEPTH_UNIT,
         state: str | None = None,
+        hand: str = "both",
     ):
         """Initialize the reader with metadata, filtering, and transform config.
 
@@ -151,6 +152,7 @@ class DatasetReader(BaseDatasetReader):
                 instead of normalized float32.
             depth_output_unit: Physical unit depth maps are dequantized to
                 (``"m"`` or ``"mm"``). Defaults to ``"mm"``.
+            hand: Arms included when state="relative": "both" (default), "left", or "right".
         """
         self._meta = meta
         self.root = root
@@ -180,6 +182,7 @@ class DatasetReader(BaseDatasetReader):
             RelativeEEFTransform(
                 meta.features,
                 meta.stats,
+                hand=hand,
                 observation_anchor_index=int(np.argmax((self.delta_indices or {}).get(OBS_STATE, [0]))),
             )
             if state == "relative"
@@ -203,7 +206,9 @@ class DatasetReader(BaseDatasetReader):
         poses = {key: transform.poses(columns[key], key) for key in (OBS_STATE, ACTION)}
         grippers = {key: transform.grippers(columns[key], key) for key in (OBS_STATE, ACTION)}
         offsets = {key: (self.delta_indices or {}).get(key, [0]) for key in (OBS_STATE, ACTION)}
-        accumulators = {key: RelativeStatsAccumulator() for key in (OBS_STATE, ACTION)}
+        accumulators = {
+            key: RelativeStatsAccumulator(10 * len(transform.sides)) for key in (OBS_STATE, ACTION)
+        }
         for episode in np.unique(episodes):
             rows: np.ndarray = np.flatnonzero(episodes == episode)
             metadata = self._meta.episodes[int(episode)]

@@ -182,6 +182,7 @@ def make_dataset(
                 repo_type=repo_type,
                 video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
                 state=state,
+                hand=getattr(cfg.policy, "hand", "both"),
             )
         else:
             dataset = StreamingLeRobotDataset(
@@ -300,6 +301,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
         state=_dataset_state(cfg),
+        hand=getattr(cfg.policy, "hand", "both"),
     )
 
     eval_dataset = LeRobotDataset(
@@ -316,6 +318,7 @@ def make_train_eval_datasets(
         repo_type=cfg.dataset.repo_type,
         video_decoder_cache_size=cfg.dataset.video_decoder_cache_size,
         state=_dataset_state(cfg),
+        hand=getattr(cfg.policy, "hand", "both"),
         relative_stats=train_dataset.meta.stats if _dataset_state(cfg) == "relative" else None,
     )
 
